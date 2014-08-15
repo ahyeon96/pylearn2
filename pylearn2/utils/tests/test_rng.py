@@ -12,6 +12,7 @@ def test_np_rng():
     """
 
     rngs = [make_np_rng(rng_or_seed=42, which_method='uniform'),
+            make_np_rng(rng_or_seed=42),
             make_np_rng(rng_or_seed=numpy.random.RandomState(42),
                         which_method='uniform'),
             make_np_rng(default_seed=42),
@@ -33,6 +34,7 @@ def test_theano_rng():
     """
 
     rngs = [make_theano_rng(rng_or_seed=42, which_method='uniform'),
+            make_theano_rng(rng_or_seed=42),
             make_theano_rng(rng_or_seed=RandomStreams(42),
                             which_method='uniform'),
             make_theano_rng(default_seed=42),

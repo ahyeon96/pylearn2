@@ -53,6 +53,7 @@ def make_rng(rng_or_seed=None, default_seed=None,
         which_method = [which_method]
 
     if rng_or_seed is not None and \
+       which_method is not None and \
        all(hasattr(rng_or_seed, attr) for attr in which_method):
         rng = rng_or_seed
     elif rng_or_seed is not None:
