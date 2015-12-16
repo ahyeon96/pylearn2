@@ -250,7 +250,7 @@ class Conv2D(OrigConv2D):
         self._img_shape = tuple([batch_size] + list(self._img_shape[1:]))
 
 
-def make_random_conv2D(irange, input_space, output_space,
+def make_random_conv2D(irange, istdev, input_space, output_space,
                        kernel_shape, batch_size=None, \
                        subsample = (1,1), border_mode = 'valid',
                        message = "", rng = None):
@@ -261,14 +261,24 @@ def make_random_conv2D(irange, input_space, output_space,
 
     Creates a Conv2D with random kernels
     """
+    assert not ((irange is None) and (istdev is None))
+    if irange is None:
+        assert istdev is not None
+    if istdev is None:
+        assert irange is not None
 
-    rng = make_np_rng(rng, default_seed, which_method='uniform')
+    rng = make_np_rng(rng, default_seed, which_method=['uniform', 'normal'])
 
-    W = sharedX(rng.uniform(
-        -irange, irange,
-        (output_space.num_channels, input_space.num_channels,
-         kernel_shape[0], kernel_shape[1])
-    ))
+    if irange is not None:
+        W = sharedX(rng.uniform(
+            -irange, irange,
+            (output_space.num_channels, input_space.num_channels,
+             kernel_shape[0], kernel_shape[1])))
+    else:
+        W = sharedX(rng.normal(
+            0., istdev,
+            (output_space.num_channels, input_space.num_channels,
+             kernel_shape[0], kernel_shape[1])))
 
     return Conv2D(
         filters=W,

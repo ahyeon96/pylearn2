@@ -2771,6 +2771,9 @@ class RectifierConvNonlinearity(ConvNonlinearity):
         return p
 
 
+ReLUConvNL = RectifierConvNonlinearity
+
+
 class SigmoidConvNonlinearity(ConvNonlinearity):
 
     """
@@ -2864,6 +2867,9 @@ class SigmoidConvNonlinearity(ConvNonlinearity):
         return ave
 
 
+SigmoidConvNL = SigmoidConvNonlinearity
+
+
 class TanhConvNonlinearity(ConvNonlinearity):
 
     """
@@ -2880,6 +2886,9 @@ class TanhConvNonlinearity(ConvNonlinearity):
         """
         p = T.tanh(linear_response)
         return p
+
+
+TanhConvNL = TanhConvNonlinearity
 
 
 class ConvElemwise(Layer):
@@ -2916,10 +2925,15 @@ class ConvElemwise(Layer):
     irange : float, optional
         if specified, initializes each weight randomly in
         U(-irange, irange)
+    istdev : float, optional
+        if specified, initializes each weight randomly in
+        N(0, istdev)
     border_mode : str, optional
         A string indicating the size of the output:
 
           - "full" : The output is the full discrete linear convolution of the
+            inputs.
+          - "half" : The output is the half discrete linear convolution of the
             inputs.
           - "valid" : The output consists only of those elements that do not
             rely on the zero-padding. (Default)
@@ -2968,6 +2982,7 @@ class ConvElemwise(Layer):
                  layer_name,
                  nonlinearity,
                  irange=None,
+                 istdev=None,
                  border_mode='valid',
                  sparse_init=None,
                  include_prob=1.0,
@@ -2984,12 +2999,12 @@ class ConvElemwise(Layer):
                  kernel_stride=(1, 1),
                  monitor_style="classification"):
 
-        if (irange is None) and (sparse_init is None):
-            raise AssertionError("You should specify either irange or "
+        if (irange is None) and (istdev is None) and (sparse_init is None):
+            raise AssertionError("You should specify either irange, istdev, or "
                                  "sparse_init when calling the constructor of "
                                  "ConvElemwise.")
-        elif (irange is not None) and (sparse_init is not None):
-            raise AssertionError("You should specify either irange or "
+        elif (irange is not None) and (istdev is not None) and (sparse_init is not None):
+            raise AssertionError("You should specify either irange, istdev, or "
                                  "sparse_init when calling the constructor of "
                                  "ConvElemwise and not both.")
 
@@ -3002,6 +3017,11 @@ class ConvElemwise(Layer):
                 pool_type)
 
         assert nonlinearity is not None
+
+        # Default behavior
+        if tied_b is None:
+            tied_b = True
+
         super(ConvElemwise, self).__init__()
         self.nonlin = nonlinearity
         self.__dict__.update(locals())
@@ -3030,6 +3050,7 @@ class ConvElemwise(Layer):
 
             self.transformer = conv2d.make_random_conv2D(
                 irange=self.irange,
+                istdev=self.istdev,
                 input_space=self.input_space,
                 output_space=self.detector_space,
                 kernel_shape=self.kernel_shape,
@@ -3362,7 +3383,7 @@ class ConvRectifiedLinear(ConvElemwise):
     tied_b : bool
         If true, all biases in the same channel are constrained to be the
         same as each other. Otherwise, each bias at each location is
-        learned independently.
+        learned independently. Default is True.
     detector_normalization : callable
         See `output_normalization`
     output_normalization : callable
@@ -3395,7 +3416,7 @@ class ConvRectifiedLinear(ConvElemwise):
                  left_slope=0.0,
                  max_kernel_norm=None,
                  pool_type='max',
-                 tied_b=False,
+                 tied_b=True,
                  detector_normalization=None,
                  output_normalization=None,
                  kernel_stride=(1, 1),
