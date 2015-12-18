@@ -44,37 +44,34 @@ class ConstrainFilterL2Norm(ModelExtension):
     @wraps(ModelExtension.post_modify_updates)
     def post_modify_updates(self, updates, model):
         if hasattr(model, 'W'):
-            W = model.W
+            params = [model.W]
         else:
             if not hasattr(model, 'transformer'):
                 raise TypeError("model has neither 'W' nor 'transformer'.")
             transformer = model.transformer
             params = transformer.get_params()
-            if len(params) != 1:
-                raise TypeError("self.transformer does not have exactly one "
-                                "parameter tensor.")
-            W, = params
 
-        if W in updates:
-            updated_W = updates[W]
-            l2_norms = T.sqrt(
-                T.square(updated_W).sum(
-                    axis=self.axis, keepdims=True
+        for param in params:
+            if param in updates:
+                updated_param = updates[param]
+                l2_norms = T.sqrt(
+                    T.square(updated_param).sum(
+                        axis=self.axis, keepdims=True
+                    )
                 )
-            )
-            if self.min_limit is None:
-                min_limit = 0.
-            else:
-                min_limit = self.min_limit
+                if self.min_limit is None:
+                    min_limit = 0.
+                else:
+                    min_limit = self.min_limit
 
-            if self.max_limit is None:
-                max_limit = l2_norms.max()
-            else:
-                max_limit = self.max_limit
+                if self.max_limit is None:
+                    max_limit = l2_norms.max()
+                else:
+                    max_limit = self.max_limit
 
-            desired_norms = T.clip(l2_norms, min_limit, max_limit)
-            scale = desired_norms / T.maximum(1e-7, l2_norms)
-            updates[W] = updated_W * scale
+                desired_norms = T.clip(l2_norms, min_limit, max_limit)
+                scale = desired_norms / T.maximum(1e-7, l2_norms)
+                updates[param] = updated_param * scale
 
 
 class MaxL2FilterNorm(ConstrainFilterL2Norm):
