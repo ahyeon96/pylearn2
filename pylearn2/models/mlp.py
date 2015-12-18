@@ -3124,9 +3124,9 @@ class ConvElemwise(Layer):
 
         rng = self.mlp.rng
 
-        output_shape = get_conv_output_shape((None, None) +
+        output_shape = get_conv_output_shape([None, None] +
                                              self.input_space.shape,
-                                             (None, None) +
+                                             [None, None] +
                                              self.kernel_shape,
                                              self.border_mode,
                                              self.subsample)
