@@ -23,6 +23,7 @@ from theano.sandbox.cuda.dnn import dnn_available, dnn_pool
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 from theano.tensor.signal.downsample import max_pool_2d
 import theano.tensor as T
+from theano.tensor.nnet.abstract_conv import get_conv_output_shape
 
 from pylearn2.compat import OrderedDict
 from pylearn2.costs.mlp import Default
@@ -2972,7 +2973,7 @@ class ConvElemwise(Layer):
             spatial pooling
           - output: the output of the layer, after sptial pooling, can
             be normalized as well
-    kernel_stride : 2-tuple of ints, optional
+    subsample : 2-tuple of ints, optional
         The stride of the convolution kernel. Default is (1, 1).
     """
 
@@ -2996,7 +2997,7 @@ class ConvElemwise(Layer):
                  tied_b=None,
                  detector_normalization=None,
                  output_normalization=None,
-                 kernel_stride=(1, 1),
+                 subsample=(1, 1),
                  monitor_style="classification"):
 
         if (irange is None) and (istdev is None) and (sparse_init is None):
@@ -3054,7 +3055,7 @@ class ConvElemwise(Layer):
                 input_space=self.input_space,
                 output_space=self.detector_space,
                 kernel_shape=self.kernel_shape,
-                subsample=self.kernel_stride,
+                subsample=self.subsample,
                 border_mode=self.border_mode,
                 rng=rng)
         elif self.sparse_init is not None:
@@ -3063,7 +3064,7 @@ class ConvElemwise(Layer):
                 input_space=self.input_space,
                 output_space=self.detector_space,
                 kernel_shape=self.kernel_shape,
-                subsample=self.kernel_stride,
+                subsample=self.subsample,
                 border_mode=self.border_mode,
                 rng=rng)
         else:
@@ -3123,20 +3124,13 @@ class ConvElemwise(Layer):
 
         rng = self.mlp.rng
 
-        if self.border_mode == 'valid':
-            output_shape = [int((self.input_space.shape[0]
-                                 - self.kernel_shape[0])
-                                / self.kernel_stride[0]) + 1,
-                            int((self.input_space.shape[1]
-                                 - self.kernel_shape[1])
-                                / self.kernel_stride[1]) + 1]
-        elif self.border_mode == 'full':
-            output_shape = [int((self.input_space.shape[0]
-                                 + self.kernel_shape[0])
-                                / self.kernel_stride[0]) - 1,
-                            int((self.input_space.shape[1]
-                                 + self.kernel_shape[1])
-                                / self.kernel_stride[1]) - 1]
+        output_shape = get_conv_output_shape((None, None) +
+                                             self.input_space.shape,
+                                             (None, None) +
+                                             self.kernel_shape,
+                                             self.border_mode,
+                                             self.subsample)
+        output_shape = output_shape[2:]
 
         self.detector_space = Conv2DSpace(shape=output_shape,
                                           num_channels=self.output_channels,
@@ -3396,7 +3390,7 @@ class ConvRectifiedLinear(ConvElemwise):
         - output: the output of the layer, after spatial pooling, can
             be normalized as well
 
-    kernel_stride : tuple
+    subsample : tuple
         The stride of the convolution kernel. A two-tuple of ints.
     """
 
@@ -3419,7 +3413,7 @@ class ConvRectifiedLinear(ConvElemwise):
                  tied_b=True,
                  detector_normalization=None,
                  output_normalization=None,
-                 kernel_stride=(1, 1),
+                 subsample=(1, 1),
                  monitor_style="classification"):
 
         nonlinearity = RectifierConvNonlinearity(left_slope)
@@ -3456,7 +3450,7 @@ class ConvRectifiedLinear(ConvElemwise):
                                                   tied_b=tied_b,
                                                   detector_normalization=dn,
                                                   output_normalization=on,
-                                                  kernel_stride=kernel_stride,
+                                                  subsample=subsample,
                                                   monitor_style=monitor_style)
 
 
