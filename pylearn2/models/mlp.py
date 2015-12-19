@@ -3441,6 +3441,7 @@ class ConvRectifiedLinear(ConvElemwise):
                                                   layer_name,
                                                   nonlinearity,
                                                   irange=irange,
+                                                  istdev=istdev,
                                                   border_mode=border_mode,
                                                   sparse_init=sparse_init,
                                                   include_prob=include_prob,
