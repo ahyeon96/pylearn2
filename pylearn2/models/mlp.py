@@ -3404,6 +3404,7 @@ class ConvRectifiedLinear(ConvElemwise):
                  pool_stride,
                  layer_name,
                  irange=None,
+                 istdev=None,
                  border_mode='valid',
                  sparse_init=None,
                  include_prob=1.0,
@@ -3421,14 +3422,14 @@ class ConvRectifiedLinear(ConvElemwise):
 
         nonlinearity = RectifierConvNonlinearity(left_slope)
 
-        if (irange is None) and (sparse_init is None):
-            raise AssertionError("You should specify either irange or "
+        if (irange is None) and (istdev is None) and (sparse_init is None):
+            raise AssertionError("You should specify either irange, istdev, or "
                                  "sparse_init when calling the constructor of "
-                                 "ConvRectifiedLinear.")
-        elif (irange is not None) and (sparse_init is not None):
-            raise AssertionError("You should specify either irange or "
+                                 "ConvElemwise.")
+        elif (irange is not None) and (istdev is not None) and (sparse_init is not None):
+            raise AssertionError("You should specify either irange, istdev, or "
                                  "sparse_init when calling the constructor of "
-                                 "ConvRectifiedLinear and not both.")
+                                 "ConvElemwise and not both.")
 
         # Alias the variables for pep8
         mkn = max_kernel_norm
