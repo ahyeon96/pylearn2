@@ -3046,8 +3046,11 @@ class ConvElemwise(Layer):
         rng : object
             random number generator object.
         """
-        if self.irange is not None:
+        if ((self.irange is not None) or
+            (self.istdev is not None)):
             assert self.sparse_init is None
+            assert not ((self.irange is not None) and
+                        (self.istdev is not None))
 
             self.transformer = conv2d.make_random_conv2D(
                 irange=self.irange,
@@ -3124,7 +3127,7 @@ class ConvElemwise(Layer):
 
         rng = self.mlp.rng
 
-        output_shape = get_conv_output_shape([None, None] +
+        output_shape = get_conv_output_shape((None, None) +
                                              self.input_space.shape,
                                              [None, None] +
                                              self.kernel_shape,

@@ -158,6 +158,7 @@ class Cudnn2D(OrigConv2D):
 
 
 def make_random_conv2D(irange,
+                       istdev,
                        input_space,
                        output_space,
                        kernel_shape,
@@ -186,12 +187,24 @@ def make_random_conv2D(irange,
     rng : optional
     """
 
-    rng = make_np_rng(rng, default_seed, which_method='uniform')
+    assert not ((irange is None) and (istdev is None))
+    if irange is None:
+        assert istdev is not None
+    if istdev is None:
+        assert irange is not None
 
-    W = sharedX(rng.uniform(-irange, irange, (output_space.num_channels,
-                                              input_space.num_channels,
-                                              kernel_shape[0],
-                                              kernel_shape[1])))
+    rng = make_np_rng(rng, default_seed, which_method=['uniform', 'normal'])
+
+    if irange is not None:
+        W = sharedX(rng.uniform(
+            -irange, irange,
+            (output_space.num_channels, input_space.num_channels,
+             kernel_shape[0], kernel_shape[1])))
+    else:
+        W = sharedX(rng.normal(
+            0., istdev,
+            (output_space.num_channels, input_space.num_channels,
+             kernel_shape[0], kernel_shape[1])))
 
     return Cudnn2D(
         filters=W,
