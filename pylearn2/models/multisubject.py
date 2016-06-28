@@ -7,6 +7,7 @@ __credits__ = ["Ian Goodfellow", "David Warde-Farley"]
 __license__ = "3-clause BSD"
 __maintainer__ = "LISA Lab"
 
+
 import logging
 import math
 import operator
