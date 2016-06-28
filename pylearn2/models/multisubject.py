@@ -530,9 +530,28 @@ class MultiSubjectMLP(MLP):
         return T.cast(rval, state.dtype)
 
     @wraps(Layer.cost)
-    def cost(self, Y, Y_hat):
+    def cost(self, Y, Y_hat, other_mlp_weight=1.):
+        cost = None
+        for mlp, ds in safe_izip(model, data):
+            space, sources = self.get_data_specs(mlp)
+            space.validate(ds)
+            (X, Y) = ds
+            Y_hat = mlp.dropout_fprop(
+                X,
+                default_input_include_prob=self.default_input_include_prob,
+                input_include_probs=self.input_include_probs,
+                default_input_scale=self.default_input_scale,
+                input_scales=self.input_scales,
+                per_example=self.per_example
+            )
+            c = model.cost(Y, Y_hat)
+            if cost is None:
+                cost = c
+            else:
+                cost = cost + self.other_mlp_weight * c
+        return cost
 
-        return self.layers[-1].cost(Y, Y_hat)
+        # return self.layers[-1].cost(Y, Y_hat)
 
     @wraps(Layer.cost_matrix)
     def cost_matrix(self, Y, Y_hat):
@@ -556,10 +575,12 @@ class MultiSubjectMLP(MLP):
         ----------
         data : WRITEME
         """
-        self.cost_from_X_data_specs()[0].validate(data)
-        X, Y = data
-        Y_hat = self.fprop(X)
-        return self.cost(Y, Y_hat)
+
+        for mlp, ds in safe_izip(model.mlps, data): 
+            self.cost_from_X_data_specs()[0].validate(data)
+            X, Y = data
+            Y_hat = self.fprop(X)
+            return self.cost(Y, Y_hat)
 
     def cost_from_X_data_specs(self):
         """
@@ -567,10 +588,12 @@ class MultiSubjectMLP(MLP):
 
         This is useful if cost_from_X is used in a MethodCost.
         """
-        space = CompositeSpace((self.get_input_space(),
-                                self.get_target_space()))
-        source = (self.get_input_source(), self.get_target_source())
-        return (space, source)
+        
+        for mlp, ds in safe_izip(model.mlps, data): 
+            space = CompositeSpace((self.get_input_space(),
+                                    self.get_target_space()))
+            source = (self.get_input_source(), self.get_target_source())
+            return (space, source)
 
     def __str__(self):
         """
