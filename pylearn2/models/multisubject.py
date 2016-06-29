@@ -110,6 +110,7 @@ class MultiSubjectMLP(MLP):
     def __init__(self, layers, batch_size=None, input_space=None,
                  input_source='features', target_source='targets',
                  nvis=None, seed=None, layer_name=None, monitor_targets=True,
+                 other_mlp_weight=1.,
                  **kwargs):
         super(MLP, self).__init__(**kwargs)
 
@@ -530,38 +531,37 @@ class MultiSubjectMLP(MLP):
         return T.cast(rval, state.dtype)
 
     @wraps(Layer.cost)
-    def cost(self, Y, Y_hat, other_mlp_weight=1.):
+    def cost(self, Y, Y_hat):
         cost = None
-        for mlp, ds in safe_izip(model, data):
-            space, sources = self.get_data_specs(mlp)
-            space.validate(ds)
-            (X, Y) = ds
-            Y_hat = mlp.dropout_fprop(
-                X,
-                default_input_include_prob=self.default_input_include_prob,
-                input_include_probs=self.input_include_probs,
-                default_input_scale=self.default_input_scale,
-                input_scales=self.input_scales,
-                per_example=self.per_example
-            )
-            c = model.cost(Y, Y_hat)
+        for mlp, Yi, Y_hati in safe_izip(self.mlps, Y, Y_hat):
+            c = mlp.cost(Yi, Y_hati)
             if cost is None:
                 cost = c
             else:
                 cost = cost + self.other_mlp_weight * c
         return cost
 
-        # return self.layers[-1].cost(Y, Y_hat)
-
     @wraps(Layer.cost_matrix)
     def cost_matrix(self, Y, Y_hat):
-
-        return self.layers[-1].cost_matrix(Y, Y_hat)
+        cost = []
+        for mlp, Yi, Y_hati in safe_izip(self.mlps, Y, Y_hat):
+            c = mlp.cost_matrix(Yi, Y_hati)
+            if len(cost) == 0:
+                cost.append(c)
+            else:
+                cost.append(self.other_mlp_weight * c)
+        return cost
 
     @wraps(Layer.cost_from_cost_matrix)
     def cost_from_cost_matrix(self, cost_matrix):
-
-        return self.layers[-1].cost_from_cost_matrix(cost_matrix)
+        cost = None
+        for mlp, cost_matrixi in safe_izip(self.mlps, cost_matrix):
+            c = mlp.cost_from_cost_matrix(cost_matrixi)
+            if cost is None:
+                cost = c
+            else:
+                cost = cost + self.other_mlp_weight * c
+        return cost
 
     def cost_from_X(self, data):
         """
@@ -576,11 +576,18 @@ class MultiSubjectMLP(MLP):
         data : WRITEME
         """
 
+        cost = None
         for mlp, ds in safe_izip(model.mlps, data): 
             self.cost_from_X_data_specs()[0].validate(data)
             X, Y = data
-            Y_hat = self.fprop(X)
-            return self.cost(Y, Y_hat)
+            Y_hat = mlp.fprop(X)
+
+            c = mlp.cost(Y, Y_hat)
+            if cost is None:
+                cost = c
+            else:
+                cost = cost + self.other_mlp_weight * c
+        return cost
 
     def cost_from_X_data_specs(self):
         """
@@ -588,12 +595,13 @@ class MultiSubjectMLP(MLP):
 
         This is useful if cost_from_X is used in a MethodCost.
         """
-        
-        for mlp, ds in safe_izip(model.mlps, data): 
-            space = CompositeSpace((self.get_input_space(),
-                                    self.get_target_space()))
-            source = (self.get_input_source(), self.get_target_source())
-            return (space, source)
+        spaces = []
+        sources = []
+        for mlp in self.mlps: 
+            spaces.append(CompositeSpace((self.get_input_space(),
+                                          self.get_target_space())))
+            sources.append((self.get_input_source(), self.get_target_source()))
+        return (CompositeSpace(tuple(spaces)), tuple(sources))
 
     def __str__(self):
         """
@@ -601,11 +609,13 @@ class MultiSubjectMLP(MLP):
         layers. Feel free to add reasonably concise info as needed.
         """
         rval = []
-        for layer in self.layers:
-            rval.append(layer.layer_name)
+        for mlp in self.mlps:
+            rval.append(mlp.name)
+            """
             input_space = layer.get_input_space()
             rval.append('\tInput space: ' + str(input_space))
             rval.append('\tTotal input dimension: ' +
                         str(input_space.get_total_dimension()))
+            """
         rval = '\n'.join(rval)
         return rval
