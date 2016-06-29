@@ -362,7 +362,7 @@ class MultiSubjectMLP(MLP):
 
     def dropout_fprop(self, state_below, default_input_include_prob=0.5,
                       input_include_probs=None, default_input_scale=2.,
-                      input_scales=None, per_example=True):
+                      input_scales=None, per_example=True, return_all=False):
         """
         Returns the output of the MLP, when applying dropout to the input and
         intermediate layers.
@@ -395,6 +395,8 @@ class MultiSubjectMLP(MLP):
         probabilities.
         """
 
+       
+
         if input_include_probs is None:
             input_include_probs = {}
 
@@ -406,31 +408,42 @@ class MultiSubjectMLP(MLP):
 
         theano_rng = MRG_RandomStreams(max(self.rng.randint(2 ** 15), 1))
 
-        for layer in self.layers:
-            layer_name = layer.layer_name
+        Y_hat_list = [Y_hat]    
+        for mlp, state_belowi in safe_izip(self.mlps, state_below):
 
-            if layer_name in input_include_probs:
-                include_prob = input_include_probs[layer_name]
-            else:
-                include_prob = default_input_include_prob
+            for layer in self.layers:
+                layer_name = layer.layer_name
 
-            if layer_name in input_scales:
-                scale = input_scales[layer_name]
-            else:
-                scale = default_input_scale
+                if layer_name in input_include_probs:
+                    include_prob = input_include_probs[layer_name]
+                else:
+                    include_prob = default_input_include_prob
 
-            state_below = self.apply_dropout(
-                state=state_below,
-                include_prob=include_prob,
-                theano_rng=theano_rng,
-                scale=scale,
-                mask_value=layer.dropout_input_mask_value,
-                input_space=layer.get_input_space(),
-                per_example=per_example
-            )
-            state_below = layer.fprop(state_below)
+                if layer_name in input_scales:
+                    scale = input_scales[layer_name]
+                else:
+                    scale = default_input_scale
 
-        return state_below
+                state_below = self.apply_dropout(
+                    state=state_below,
+                    include_prob=include_prob,
+                    theano_rng=theano_rng,
+                    scale=scale,
+                    mask_value=layer.dropout_input_mask_value,
+                    input_space=layer.get_input_space(),
+                    per_example=per_example
+                )
+                state_below = layer.fprop(state_below)
+
+            Y_hat = self.layers[0].dropout_fprop(state_belowi)
+        
+            for layer in self.layers[1:]:
+                Y_hat = layer.dropout_fprop(Y_hat)
+                Y_hat_list.append(Y_hat)
+
+        if return_all:
+            return Y_hat_list
+        return Y_hat
 
     def _validate_layer_names(self, layers):
         """
@@ -471,17 +484,17 @@ class MultiSubjectMLP(MLP):
         if not hasattr(self, "input_space"):
             raise AttributeError("Input space has not been provided.")
 
-        rval = self.layers[0].fprop(state_below)
-
-        rlist = [rval]
-
+    Y_hat_list = [Y_hat]    
+    for mlp, state_belowi in safe_izip(self.mlps, state_below):
+        Y_hat = self.layers[0].fprop(state_belowi)
+        
         for layer in self.layers[1:]:
-            rval = layer.fprop(rval)
-            rlist.append(rval)
+            Y_hat = layer.fprop(Y_hat)
+            Y_hat_list.append(Y_hat)
 
-        if return_all:
-            return rlist
-        return rval
+    if return_all:
+        return Y_hat_list
+    return Y_hat
 
     def apply_dropout(self, state, include_prob, scale, theano_rng,
                       input_space, mask_value=0, per_example=True):
