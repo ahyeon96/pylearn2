@@ -9,50 +9,22 @@ __maintainer__ = "LISA Lab"
 
 
 import logging
-import math
 import operator
-import sys
-import warnings
 
 import numpy as np
 from theano.compat import six
 from theano.compat.six.moves import reduce, xrange
-from theano import config
-from theano.gof.op import get_debug_values
-from theano.sandbox.cuda import cuda_enabled
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 import theano.tensor as T
 
 from pylearn2.compat import OrderedDict
 from pylearn2.costs.mlp import Default
-from pylearn2.model_extensions.norm_constraint import MaxL2FilterNorm
 from pylearn2.models.mlp import MLP
-from pylearn2.monitor import get_monitor_doc
-from pylearn2.expr.nnet import arg_of_softmax
-from pylearn2.expr.nnet import pseudoinverse_softmax_numpy
 from pylearn2.space import CompositeSpace
-from pylearn2.space import Conv2DSpace
-from pylearn2.space import Space
 from pylearn2.space import VectorSpace, IndexSpace
-from pylearn2.utils import function
-from pylearn2.utils import is_iterable
-from pylearn2.utils import py_float_types
-from pylearn2.utils import py_integer_types
-from pylearn2.utils import safe_union
-from pylearn2.utils import safe_zip
 from pylearn2.utils import safe_izip
-from pylearn2.utils import sharedX
 from pylearn2.utils import wraps
-from pylearn2.utils import contains_inf
-from pylearn2.utils import isfinite
 from pylearn2.utils.data_specs import DataSpecsMapping
-
-from pylearn2.expr.nnet import (elemwise_kl, kl, compute_precision,
-                                compute_recall, compute_f1)
-
-# Only to be used by the deprecation warning wrapper functions
-from pylearn2.costs.mlp import L1WeightDecay as _L1WD
-from pylearn2.costs.mlp import WeightDecay as _WD
 
 
 logger = logging.getLogger(__name__)
@@ -68,9 +40,12 @@ class MultiSubjectMLP(MLP):
 
     Parameters
     ----------
-    layers : list
-        A list of Layer objects. The final layer specifies the output space
-        of this MLP.
+    mlps : list
+        A list of MLP objects. The first MLP is the target subject.
+    num_shared_layers : int
+        Number of final layers the MLPs should share parameters across.
+    share_biases : bool
+        Whether to share biases across shared layers.
     batch_size : int, optional
         If not specified then must be a positive integer. Mostly useful if
         one of your layers involves a Theano op like convolution that
@@ -123,6 +98,7 @@ class MultiSubjectMLP(MLP):
 
         self.layer_name = layer_name
         self.num_shared_layers = num_shared_layers
+        self.share_biases = share_biases
         self.mlp_names = set()
         for mlp in mlps:
             if mlp.layer_name in self.layer_names:
@@ -171,7 +147,13 @@ class MultiSubjectMLP(MLP):
         self.freeze_set = set([])
 
     def _share_parameters(self):
-        raise NotImplementedError
+        main_mlp = self.mlps[0]
+        for mlp in self.mlps:
+            for layer_n in xrange(-1, -self.num_shared_layers-1, -1):
+                params = main_mlp.layers[layer_n].transformer.get_params()
+                mlp.layers[layer_n].transformer.set_params(params)
+                if self.share_biases:
+                    mlp.layers[layer_n].b = main_mlp.layers[layer_n].b
 
     @wraps(Layer.get_default_cost)
     def get_default_cost(self):
@@ -194,15 +176,16 @@ class MultiSubjectMLP(MLP):
 
     @wraps(Layer.set_input_space)
     def set_input_space(self, space):
-        raise NotImplementedError
         if hasattr(self, "mlp"):
             assert self._nested
             self.rng = self.mlp.rng
             self.batch_size = self.mlp.batch_size
 
         self.input_space = space
+        for mlp, sp in safe_izip(self.mlps, space):
+            mlp.set_input_space(sp)
 
-        self._update_layer_input_spaces()
+        self._share_parameters()
 
     @wraps(Layer.get_monitoring_channels)
     def get_monitoring_channels(self, data):

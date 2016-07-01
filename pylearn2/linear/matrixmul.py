@@ -55,6 +55,16 @@ class MatrixMul(LinearTransform):
         """
         return [self._W]
 
+    @functools.wraps(LinearTransform.get_params)
+    def set_params(self, params):
+        """
+        .. todo::
+
+            WRITEME
+        """
+        assert len(params) == 0
+        self._W = params[0]
+
     def lmul(self, x):
         """
         .. todo::
