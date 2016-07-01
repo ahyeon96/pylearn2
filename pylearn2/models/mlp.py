@@ -690,18 +690,23 @@ class MLP(Layer):
 
         # check the case where coeffs is a scalar
         if not hasattr(coeffs, '__iter__'):
-            coeffs = [coeffs] * len(self.layers)
-
+            c = dict()
+            for layer in self.layers:
+                c[layer.name] = coeffs
+            coeffs = c
+        
         layer_costs = []
-        for mlp in self.mlps:
-            for layer, coeff in safe_izip(self.layers, coeffs):
-                if coeff != 0.:
-                    layer_costs += [layer.get_weight_decay(coeff)]
+     
+        for layer in self.layers:
+            name = layer.name
+            val = coeffs.get(name, None)
+            if val is not None:
+                layer_costs.append(layer.get_weight_decay(val))
 
-            if len(layer_costs) == 0:
-                return T.constant(0, dtype=config.floatX)
+        if len(layer_costs) == 0:
+            return T.constant(0, dtype=config.floatX)
 
-            total_cost = reduce(operator.add, layer_costs)
+        total_cost = reduce(operator.add, layer_costs)
 
         return total_cost
 
@@ -709,19 +714,24 @@ class MLP(Layer):
     def get_l1_weight_decay(self, coeffs):
         # raise NotImplementedError
         # check the case where coeffs is a scalar
-        if not hasattr(coeffs, '__iter__'):
-            coeffs = [coeffs] * len(self.layers)
-
+         if not hasattr(coeffs, '__iter__'):
+            c = dict()
+            for layer in self.layers:
+                c[layer.name] = coeffs
+            coeffs = c
+        
         layer_costs = []
-        for mlp in self.mlps:
-            for layer, coeff in safe_izip(self.layers, coeffs):
-                if coeff != 0.:
-                    layer_costs += [layer.get_l1_weight_decay(coeff)]
+     
+        for layer in self.layers:
+            name = layer.name
+            val = coeffs.get(name, None)
+            if val is not None:
+                layer_costs.append(layer.get_l1_weight_decay(val))
 
-            if len(layer_costs) == 0:
-                return T.constant(0, dtype=config.floatX)
+        if len(layer_costs) == 0:
+            return T.constant(0, dtype=config.floatX)
 
-            total_cost = reduce(operator.add, layer_costs)
+        total_cost = reduce(operator.add, layer_costs)
 
         return total_cost
 

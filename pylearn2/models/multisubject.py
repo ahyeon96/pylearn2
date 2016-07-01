@@ -148,7 +148,7 @@ class MultiSubjectMLP(MLP):
 
     def _share_parameters(self):
         main_mlp = self.mlps[0]
-        for mlp in self.mlps:
+        for mlp in self.mlps[1:]:
             for layer_n in xrange(-1, -self.num_shared_layers-1, -1):
                 params = main_mlp.layers[layer_n].transformer.get_params()
                 mlp.layers[layer_n].transformer.set_params(params)
