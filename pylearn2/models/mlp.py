@@ -686,40 +686,42 @@ class MLP(Layer):
 
     @wraps(Layer.get_weight_decay)
     def get_weight_decay(self, coeffs):
-        raise NotImplementedError
+        # raise NotImplementedError
 
         # check the case where coeffs is a scalar
         if not hasattr(coeffs, '__iter__'):
             coeffs = [coeffs] * len(self.layers)
 
         layer_costs = []
-        for layer, coeff in safe_izip(self.layers, coeffs):
-            if coeff != 0.:
-                layer_costs += [layer.get_weight_decay(coeff)]
+        for mlp in self.mlps:
+            for layer, coeff in safe_izip(self.layers, coeffs):
+                if coeff != 0.:
+                    layer_costs += [layer.get_weight_decay(coeff)]
 
-        if len(layer_costs) == 0:
-            return T.constant(0, dtype=config.floatX)
+            if len(layer_costs) == 0:
+                return T.constant(0, dtype=config.floatX)
 
-        total_cost = reduce(operator.add, layer_costs)
+            total_cost = reduce(operator.add, layer_costs)
 
         return total_cost
 
     @wraps(Layer.get_l1_weight_decay)
     def get_l1_weight_decay(self, coeffs):
-        raise NotImplementedError
+        # raise NotImplementedError
         # check the case where coeffs is a scalar
         if not hasattr(coeffs, '__iter__'):
             coeffs = [coeffs] * len(self.layers)
 
         layer_costs = []
-        for layer, coeff in safe_izip(self.layers, coeffs):
-            if coeff != 0.:
-                layer_costs += [layer.get_l1_weight_decay(coeff)]
+        for mlp in self.mlps:
+            for layer, coeff in safe_izip(self.layers, coeffs):
+                if coeff != 0.:
+                    layer_costs += [layer.get_l1_weight_decay(coeff)]
 
-        if len(layer_costs) == 0:
-            return T.constant(0, dtype=config.floatX)
+            if len(layer_costs) == 0:
+                return T.constant(0, dtype=config.floatX)
 
-        total_cost = reduce(operator.add, layer_costs)
+            total_cost = reduce(operator.add, layer_costs)
 
         return total_cost
 
