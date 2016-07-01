@@ -686,6 +686,7 @@ class MLP(Layer):
 
     @wraps(Layer.get_weight_decay)
     def get_weight_decay(self, coeffs):
+        raise NotImplementedError
 
         # check the case where coeffs is a scalar
         if not hasattr(coeffs, '__iter__'):
@@ -705,7 +706,7 @@ class MLP(Layer):
 
     @wraps(Layer.get_l1_weight_decay)
     def get_l1_weight_decay(self, coeffs):
-
+        raise NotImplementedError
         # check the case where coeffs is a scalar
         if not hasattr(coeffs, '__iter__'):
             coeffs = [coeffs] * len(self.layers)

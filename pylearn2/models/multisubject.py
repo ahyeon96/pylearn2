@@ -7,51 +7,24 @@ __credits__ = ["Ian Goodfellow", "David Warde-Farley"]
 __license__ = "3-clause BSD"
 __maintainer__ = "LISA Lab"
 
+
 import logging
-import math
 import operator
-import sys
-import warnings
 
 import numpy as np
 from theano.compat import six
 from theano.compat.six.moves import reduce, xrange
-from theano import config
-from theano.gof.op import get_debug_values
-from theano.sandbox.cuda import cuda_enabled
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 import theano.tensor as T
 
 from pylearn2.compat import OrderedDict
 from pylearn2.costs.mlp import Default
-from pylearn2.model_extensions.norm_constraint import MaxL2FilterNorm
 from pylearn2.models.mlp import MLP
-from pylearn2.monitor import get_monitor_doc
-from pylearn2.expr.nnet import arg_of_softmax
-from pylearn2.expr.nnet import pseudoinverse_softmax_numpy
 from pylearn2.space import CompositeSpace
-from pylearn2.space import Conv2DSpace
-from pylearn2.space import Space
 from pylearn2.space import VectorSpace, IndexSpace
-from pylearn2.utils import function
-from pylearn2.utils import is_iterable
-from pylearn2.utils import py_float_types
-from pylearn2.utils import py_integer_types
-from pylearn2.utils import safe_union
-from pylearn2.utils import safe_zip
 from pylearn2.utils import safe_izip
-from pylearn2.utils import sharedX
 from pylearn2.utils import wraps
-from pylearn2.utils import contains_inf
-from pylearn2.utils import isfinite
 from pylearn2.utils.data_specs import DataSpecsMapping
-
-from pylearn2.expr.nnet import (elemwise_kl, kl, compute_precision,
-                                compute_recall, compute_f1)
-
-# Only to be used by the deprecation warning wrapper functions
-from pylearn2.costs.mlp import L1WeightDecay as _L1WD
-from pylearn2.costs.mlp import WeightDecay as _WD
 
 
 logger = logging.getLogger(__name__)
@@ -67,9 +40,12 @@ class MultiSubjectMLP(MLP):
 
     Parameters
     ----------
-    layers : list
-        A list of Layer objects. The final layer specifies the output space
-        of this MLP.
+    mlps : list
+        A list of MLP objects. The first MLP is the target subject.
+    num_shared_layers : int
+        Number of final layers the MLPs should share parameters across.
+    share_biases : bool
+        Whether to share biases across shared layers.
     batch_size : int, optional
         If not specified then must be a positive integer. Mostly useful if
         one of your layers involves a Theano op like convolution that
@@ -106,32 +82,31 @@ class MultiSubjectMLP(MLP):
         Passed on to the superclass.
     """
 
-    def __init__(self, layers, batch_size=None, input_space=None,
+    def __init__(self, mlps, num_shared_layers, share_biases=False,
+                 batch_size=None, input_space=None,
                  input_source='features', target_source='targets',
                  nvis=None, seed=None, layer_name=None, monitor_targets=True,
+                 other_mlp_weight=1.,
                  **kwargs):
-        super(MLP, self).__init__(**kwargs)
+        super(MultiSubjectMLP, self).__init__(**kwargs)
 
         self.seed = seed
 
-        assert isinstance(layers, list)
-        assert all(isinstance(layer, Layer) for layer in layers)
-        assert len(layers) >= 1
+        assert isinstance(mlps, list)
+        assert all(isinstance(layer, MLP) for mlp in mlps)
+        assert len(mlps) >= 1
 
         self.layer_name = layer_name
-
-        self.layer_names = set()
-        for layer in layers:
-            assert layer.get_mlp() is None
-            if layer.layer_name in self.layer_names:
-                raise ValueError("MLP.__init__ given two or more layers "
-                                 "with same name: " + layer.layer_name)
-
-            layer.set_mlp(self)
-
+        self.num_shared_layers = num_shared_layers
+        self.share_biases = share_biases
+        self.mlp_names = set()
+        for mlp in mlps:
+            if mlp.layer_name in self.layer_names:
+                raise ValueError("MultisubjectMLP.__init__ given two or more mlps "
+                                 "with same name: " + mlp.layer_name)
             self.layer_names.add(layer.layer_name)
 
-        self.layers = layers
+        self.mlps = mlps
 
         self.batch_size = batch_size
         self.force_batch_size = batch_size
@@ -162,12 +137,23 @@ class MultiSubjectMLP(MLP):
                                  % (input_space, input_source))
 
             self.input_space = input_space
-
-            self._update_layer_input_spaces()
+            for mlp, sp in safe_izip(mlps, input_space):
+                assert sp == mlp.get_input_space()
         else:
             self._nested = True
 
+        self._share_parameters()
+
         self.freeze_set = set([])
+
+    def _share_parameters(self):
+        main_mlp = self.mlps[0]
+        for mlp in self.mlps:
+            for layer_n in xrange(-1, -self.num_shared_layers-1, -1):
+                params = main_mlp.layers[layer_n].transformer.get_params()
+                mlp.layers[layer_n].transformer.set_params(params)
+                if self.share_biases:
+                    mlp.layers[layer_n].b = main_mlp.layers[layer_n].b
 
     @wraps(Layer.get_default_cost)
     def get_default_cost(self):
@@ -176,111 +162,46 @@ class MultiSubjectMLP(MLP):
 
     @wraps(Layer.get_output_space)
     def get_output_space(self):
-
-        return self.layers[-1].get_output_space()
+        spaces = []
+        for mlp in self.mlps:
+            spaces.append(mlp.layers[-1].get_output_space())
+        return CompositeSpace(tuple(spaces))
 
     @wraps(Layer.get_target_space)
     def get_target_space(self):
-
-        return self.layers[-1].get_target_space()
+        spaces = []
+        for mlp in self.mlps:
+            spaces.append(mlp.layers[-1].get_target_space())
+        return CompositeSpace(tuple(spaces))
 
     @wraps(Layer.set_input_space)
     def set_input_space(self, space):
-
         if hasattr(self, "mlp"):
             assert self._nested
             self.rng = self.mlp.rng
             self.batch_size = self.mlp.batch_size
 
         self.input_space = space
+        for mlp, sp in safe_izip(self.mlps, space):
+            mlp.set_input_space(sp)
 
-        self._update_layer_input_spaces()
-
-    def _update_layer_input_spaces(self):
-        """
-        Tells each layer what its input space should be.
-
-        Notes
-        -----
-        This usually resets the layer's parameters!
-        """
-        layers = self.layers
-        try:
-            layers[0].set_input_space(self.get_input_space())
-        except BadInputSpaceError as e:
-            raise TypeError("Layer 0 (" + str(layers[0]) + " of type " +
-                            str(type(layers[0])) +
-                            ") does not support the MLP's "
-                            + "specified input space (" +
-                            str(self.get_input_space()) +
-                            " of type " + str(type(self.get_input_space())) +
-                            "). Original exception: " + str(e))
-        for i in xrange(1, len(layers)):
-            layers[i].set_input_space(layers[i - 1].get_output_space())
+        self._share_parameters()
 
     @wraps(Layer.get_monitoring_channels)
     def get_monitoring_channels(self, data):
-        # if the MLP is the outer MLP \
-        # (ie MLP is not contained in another structure)
+        rvals = OrderedDict()
+        for mlp, ds in safe_izip(self.mlps, data):
+            if self.monitor_targets:
+                X, Y = data
+            else:
+                X = data
+                Y = None
+            rval = mlp.get_monitoring_channels(state_below=X,
+                                                      targets=Y)
+            for key in rval.keys():
+                rvals[key] = rval[key]
 
-        if self.monitor_targets:
-            X, Y = data
-        else:
-            X = data
-            Y = None
-        rval = self.get_layer_monitoring_channels(state_below=X,
-                                                  targets=Y)
-
-        return rval
-
-    @wraps(Layer.get_layer_monitoring_channels)
-    def get_layer_monitoring_channels(self, state_below=None,
-                                      state=None, targets=None):
-
-        rval = OrderedDict()
-        state = state_below
-
-        for layer in self.layers:
-            # We don't go through all the inner layers recursively
-            state_below = state
-            state = layer.fprop(state)
-            args = [state_below, state]
-            if layer is self.layers[-1] and targets is not None:
-                args.append(targets)
-            ch = layer.get_layer_monitoring_channels(*args)
-            if not isinstance(ch, OrderedDict):
-                raise TypeError(str((type(ch), layer.layer_name)))
-            for key in ch:
-                value = ch[key]
-                doc = get_monitor_doc(value)
-                if doc is None:
-                    doc = str(type(layer)) + \
-                        ".get_monitoring_channels_from_state did" + \
-                        " not provide any further documentation for" + \
-                        " this channel."
-                doc = 'This channel came from a layer called "' + \
-                    layer.layer_name + '" of an MLP.\n' + doc
-                value.__doc__ = doc
-                rval[layer.layer_name + '_' + key] = value
-
-        return rval
-
-    def get_monitoring_data_specs(self):
-        """
-        Returns data specs requiring both inputs and targets.
-
-        Returns
-        -------
-        data_specs: TODO
-            The data specifications for both inputs and targets.
-        """
-
-        if not self.monitor_targets:
-            return (self.get_input_space(), self.get_input_source())
-        space = CompositeSpace((self.get_input_space(),
-                                self.get_target_space()))
-        source = (self.get_input_source(), self.get_target_source())
-        return (space, source)
+        return rvals
 
     @wraps(Layer.get_params)
     def get_params(self):
@@ -289,15 +210,10 @@ class MultiSubjectMLP(MLP):
             raise AttributeError("Input space has not been provided.")
 
         rval = []
-        for layer in self.layers:
-            for param in layer.get_params():
-                if param.name is None:
-                    logger.info(type(layer))
-            layer_params = layer.get_params()
-            assert not isinstance(layer_params, set)
-            for param in layer_params:
-                if param not in rval:
-                    rval.append(param)
+        for mlp in self.mlps:
+            rval.extend(mlp.get_params())
+
+        rval = set(rval)
 
         rval = [elem for elem in rval if elem not in self.freeze_set]
 
@@ -308,38 +224,22 @@ class MultiSubjectMLP(MLP):
     @wraps(Layer.get_weight_decay)
     def get_weight_decay(self, coeffs):
 
-        # check the case where coeffs is a scalar
-        if not hasattr(coeffs, '__iter__'):
-            coeffs = [coeffs] * len(self.layers)
+        mlp_costs = []
+        for mlp in self.mlps:
+            mlp_costs.append(mlp.get_weight_decay())
 
-        layer_costs = []
-        for layer, coeff in safe_izip(self.layers, coeffs):
-            if coeff != 0.:
-                layer_costs += [layer.get_weight_decay(coeff)]
-
-        if len(layer_costs) == 0:
-            return T.constant(0, dtype=config.floatX)
-
-        total_cost = reduce(operator.add, layer_costs)
+        total_cost = reduce(operator.add, mlp_costs)
 
         return total_cost
 
     @wraps(Layer.get_l1_weight_decay)
     def get_l1_weight_decay(self, coeffs):
 
-        # check the case where coeffs is a scalar
-        if not hasattr(coeffs, '__iter__'):
-            coeffs = [coeffs] * len(self.layers)
+        mlp_costs = []
+        for mlp in self.mlps:
+            mlp_costs.append(mlp.get_l1_weight_decay())
 
-        layer_costs = []
-        for layer, coeff in safe_izip(self.layers, coeffs):
-            if coeff != 0.:
-                layer_costs += [layer.get_l1_weight_decay(coeff)]
-
-        if len(layer_costs) == 0:
-            return T.constant(0, dtype=config.floatX)
-
-        total_cost = reduce(operator.add, layer_costs)
+        total_cost = reduce(operator.add, mlp_costs)
 
         return total_cost
 
@@ -349,14 +249,14 @@ class MultiSubjectMLP(MLP):
         self.batch_size = batch_size
         self.force_batch_size = batch_size
 
-        for layer in self.layers:
-            layer.set_batch_size(batch_size)
+        for mlp in self.mlps:
+            mlp.set_batch_size(batch_size)
 
     @wraps(Layer._modify_updates)
     def _modify_updates(self, updates):
 
-        for layer in self.layers:
-            layer.modify_updates(updates)
+        for mlp in self.mlps:
+            mlp._modify_updates(updates)
 
     def dropout_fprop(self, state_below, default_input_include_prob=0.5,
                       input_include_probs=None, default_input_scale=2.,
@@ -393,6 +293,8 @@ class MultiSubjectMLP(MLP):
         probabilities.
         """
 
+       
+
         if input_include_probs is None:
             input_include_probs = {}
 
@@ -404,31 +306,13 @@ class MultiSubjectMLP(MLP):
 
         theano_rng = MRG_RandomStreams(max(self.rng.randint(2 ** 15), 1))
 
-        for layer in self.layers:
-            layer_name = layer.layer_name
+        Y_hat_list = []    
+        for mlp, state_belowi in safe_izip(self.mlps, state_below):
 
-            if layer_name in input_include_probs:
-                include_prob = input_include_probs[layer_name]
-            else:
-                include_prob = default_input_include_prob
-
-            if layer_name in input_scales:
-                scale = input_scales[layer_name]
-            else:
-                scale = default_input_scale
-
-            state_below = self.apply_dropout(
-                state=state_below,
-                include_prob=include_prob,
-                theano_rng=theano_rng,
-                scale=scale,
-                mask_value=layer.dropout_input_mask_value,
-                input_space=layer.get_input_space(),
-                per_example=per_example
-            )
-            state_below = layer.fprop(state_below)
-
-        return state_below
+            Y_hat_list.append(mlp.dropout_fprop(default_input_include_prob=0.5,
+                      input_include_probs=None, default_input_scale=2.,
+                      input_scales=None, per_example=True))
+        return Y_hat_list
 
     def _validate_layer_names(self, layers):
         """
@@ -436,32 +320,9 @@ class MultiSubjectMLP(MLP):
 
             WRITEME
         """
-        if any(layer not in self.layer_names for layer in layers):
-            unknown_names = [layer for layer in layers
-                             if layer not in self.layer_names]
-            raise ValueError("MLP has no layer(s) named %s" %
-                             ", ".join(unknown_names))
-
-    def get_total_input_dimension(self, layers):
-        """
-        Get the total number of inputs to the layers whose
-        names are listed in `layers`. Used for computing the
-        total number of dropout masks.
-
-        Parameters
-        ----------
-        layers : WRITEME
-
-        Returns
-        -------
-        WRITEME
-        """
-        self._validate_layer_names(layers)
-        total = 0
-        for layer in self.layers:
-            if layer.layer_name in layers:
-                total += layer.get_input_space().get_total_dimension()
-        return total
+        for layer in layers:
+            in_mlps = [layer in mlp.layer_names for mlp in self.mlps]
+            assert(sum(in_mlps) == 1, layer + ' not found in any mlp')
 
     @wraps(Layer.fprop)
     def fprop(self, state_below, return_all=False):
@@ -469,79 +330,43 @@ class MultiSubjectMLP(MLP):
         if not hasattr(self, "input_space"):
             raise AttributeError("Input space has not been provided.")
 
-        rval = self.layers[0].fprop(state_below)
-
-        rlist = [rval]
-
-        for layer in self.layers[1:]:
-            rval = layer.fprop(rval)
-            rlist.append(rval)
-
-        if return_all:
-            return rlist
-        return rval
-
-    def apply_dropout(self, state, include_prob, scale, theano_rng,
-                      input_space, mask_value=0, per_example=True):
-        """
-        .. todo::
-
-            WRITEME
-
-        Parameters
-        ----------
-        state: WRITEME
-        include_prob : WRITEME
-        scale : WRITEME
-        theano_rng : WRITEME
-        input_space : WRITEME
-        mask_value : WRITEME
-        per_example : bool, optional
-            Sample a different mask value for every example in a batch.
-            Defaults to `True`. If `False`, sample one mask per mini-batch.
-        """
-        if include_prob in [None, 1.0, 1]:
-            return state
-        assert scale is not None
-        if isinstance(state, tuple):
-            return tuple(self.apply_dropout(substate, include_prob,
-                                            scale, theano_rng, mask_value)
-                         for substate in state)
-        # TODO: all of this assumes that if it's not a tuple, it's
-        # a dense tensor. It hasn't been tested with sparse types.
-        # A method to format the mask (or any other values) as
-        # the given symbolic type should be added to the Spaces
-        # interface.
-        if per_example:
-            mask = theano_rng.binomial(p=include_prob, size=state.shape,
-                                       dtype=state.dtype)
-        else:
-            batch = input_space.get_origin_batch(1)
-            mask = theano_rng.binomial(p=include_prob, size=batch.shape,
-                                       dtype=state.dtype)
-            rebroadcast = T.Rebroadcast(*zip(xrange(batch.ndim),
-                                             [s == 1 for s in batch.shape]))
-            mask = rebroadcast(mask)
-        if mask_value == 0:
-            rval = state * mask * scale
-        else:
-            rval = T.switch(mask, state * scale, mask_value)
-        return T.cast(rval, state.dtype)
+    rval_list = []
+    for mlp, state_belowi in safe_izip(self.mlps, state_below):
+         rval_list.append(mlp.fprop(state_belowi, return_all))
+    return rval_list
 
     @wraps(Layer.cost)
     def cost(self, Y, Y_hat):
-
-        return self.layers[-1].cost(Y, Y_hat)
+        cost = None
+        for mlp, Yi, Y_hati in safe_izip(self.mlps, Y, Y_hat):
+            c = mlp.cost(Yi, Y_hati)
+            if cost is None:
+                cost = c
+            else:
+                cost = cost + self.other_mlp_weight * c
+        return cost
 
     @wraps(Layer.cost_matrix)
     def cost_matrix(self, Y, Y_hat):
-
-        return self.layers[-1].cost_matrix(Y, Y_hat)
+        cost = []
+        for mlp, Yi, Y_hati in safe_izip(self.mlps, Y, Y_hat):
+            c = mlp.cost_matrix(Yi, Y_hati)
+            if len(cost) == 0:
+                cost.append(c)
+            else:
+                cost.append(self.other_mlp_weight * c)
+        return cost
 
     @wraps(Layer.cost_from_cost_matrix)
     def cost_from_cost_matrix(self, cost_matrix):
-
-        return self.layers[-1].cost_from_cost_matrix(cost_matrix)
+        cost = None
+        for mlp, cost_matrixi in safe_izip(self.mlps, cost_matrix):
+            c = mlp.cost_from_cost_matrix(cost_matrixi)
+            if cost is None:
+                cost = c
+            else:
+                cost = cost + self.other_mlp_weight * c
+        return cost
 
     def cost_from_X(self, data):
         """
@@ -555,10 +380,19 @@ class MultiSubjectMLP(MLP):
         ----------
         data : WRITEME
         """
-        self.cost_from_X_data_specs()[0].validate(data)
-        X, Y = data
-        Y_hat = self.fprop(X)
-        return self.cost(Y, Y_hat)
+
+        cost = None
+        for mlp, ds in safe_izip(model.mlps, data): 
+            self.cost_from_X_data_specs()[0].validate(data)
+            X, Y = data
+            Y_hat = mlp.fprop(X)
+
+            c = mlp.cost(Y, Y_hat)
+            if cost is None:
+                cost = c
+            else:
+                cost = cost + self.other_mlp_weight * c
+        return cost
 
     def cost_from_X_data_specs(self):
         """
@@ -566,10 +400,13 @@ class MultiSubjectMLP(MLP):
 
         This is useful if cost_from_X is used in a MethodCost.
         """
-        space = CompositeSpace((self.get_input_space(),
-                                self.get_target_space()))
-        source = (self.get_input_source(), self.get_target_source())
-        return (space, source)
+        spaces = []
+        sources = []
+        for mlp in self.mlps: 
+            spaces.append(CompositeSpace((self.get_input_space(),
+                                          self.get_target_space())))
+            sources.append((self.get_input_source(), self.get_target_source()))
+        return (CompositeSpace(tuple(spaces)), tuple(sources))
 
     def __str__(self):
         """
@@ -577,11 +414,13 @@ class MultiSubjectMLP(MLP):
         layers. Feel free to add reasonably concise info as needed.
         """
         rval = []
-        for layer in self.layers:
-            rval.append(layer.layer_name)
+        for mlp in self.mlps:
+            rval.append(mlp.name)
+            """
             input_space = layer.get_input_space()
             rval.append('\tInput space: ' + str(input_space))
             rval.append('\tTotal input dimension: ' +
                         str(input_space.get_total_dimension()))
+            """
         rval = '\n'.join(rval)
         return rval

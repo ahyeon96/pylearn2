@@ -31,6 +31,13 @@ class LinearTransform(object):
 
         raise NotImplementedError()
 
+    def set_params(self, params):
+        """
+        Set the parameters for the linear transformation
+        """
+
+        raise NotImplementedError()
+
     def get_weights_topo(self):
         """
         Return a batch of filters, formatted topologically.
