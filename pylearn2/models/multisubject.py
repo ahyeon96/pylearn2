@@ -19,7 +19,8 @@ import theano.tensor as T
 
 from pylearn2.compat import OrderedDict
 from pylearn2.costs.mlp import Default
-from pylearn2.models.mlp import MLP
+from pylearn2.models.mlp import Layer, MLP, Softmax
+from pylearn2.models import Model
 from pylearn2.space import CompositeSpace
 from pylearn2.space import VectorSpace, IndexSpace
 from pylearn2.utils import safe_izip
@@ -30,7 +31,7 @@ from pylearn2.utils.data_specs import DataSpecsMapping
 logger = logging.getLogger(__name__)
 
 
-class MultiSubjectMLP(MLP):
+class MultiSubjectMLP(Layer):
 
     """
     A multilayer perceptron.
@@ -93,7 +94,7 @@ class MultiSubjectMLP(MLP):
         self.seed = seed
 
         assert isinstance(mlps, list)
-        assert all(isinstance(layer, MLP) for mlp in mlps)
+        assert all(isinstance(mlp, MLP) for mlp in mlps)
         assert len(mlps) >= 1
 
         self.layer_name = layer_name
@@ -101,10 +102,10 @@ class MultiSubjectMLP(MLP):
         self.share_biases = share_biases
         self.mlp_names = set()
         for mlp in mlps:
-            if mlp.layer_name in self.layer_names:
+            if mlp.layer_name in self.mlp_names:
                 raise ValueError("MultisubjectMLP.__init__ given two or more mlps "
-                                 "with same name: " + mlp.layer_name)
-            self.layer_names.add(layer.layer_name)
+                                 "with same name: " + str(mlp.layer_name))
+            self.mlp_names.add(mlp.layer_name)
 
         self.mlps = mlps
 
@@ -142,16 +143,19 @@ class MultiSubjectMLP(MLP):
         else:
             self._nested = True
 
-        self._share_parameters()
-
         self.freeze_set = set([])
 
     def _share_parameters(self):
         main_mlp = self.mlps[0]
-        for mlp in self.mlps:
+        for mlp in self.mlps[1:]:
             for layer_n in xrange(-1, -self.num_shared_layers-1, -1):
-                params = main_mlp.layers[layer_n].transformer.get_params()
-                mlp.layers[layer_n].transformer.set_params(params)
+                main_layer = main_mlp.layers[layer_n]
+                layer = mlp.layers[layer_n]
+                if isinstance(main_layer, Softmax):
+                    layer.W = main_layer.W
+                else:
+                    params = main_layer.transformer.get_params()
+                    layer.transformer.set_params(params)
                 if self.share_biases:
                     mlp.layers[layer_n].b = main_mlp.layers[layer_n].b
 
@@ -322,7 +326,7 @@ class MultiSubjectMLP(MLP):
         """
         for layer in layers:
             in_mlps = [layer in mlp.layer_names for mlp in self.mlps]
-            assert(sum(in_mlps) == 1, layer + ' not found in any mlp')
+            assert sum(in_mlps) == 1, layer + ' not found in any mlp'
 
     @wraps(Layer.fprop)
     def fprop(self, state_below, return_all=False):
@@ -330,10 +334,10 @@ class MultiSubjectMLP(MLP):
         if not hasattr(self, "input_space"):
             raise AttributeError("Input space has not been provided.")
 
-    rval_list = []
-    for mlp, state_belowi in safe_izip(self.mlps, state_below):
-         rval_list.append(mlp.fprop(state_belowi, return_all))
-    return rval_list
+        rval_list = []
+        for mlp, state_belowi in safe_izip(self.mlps, state_below):
+            rval_list.append(mlp.fprop(state_belowi, return_all))
+        return rval_list
 
     @wraps(Layer.cost)
     def cost(self, Y, Y_hat):
