@@ -714,7 +714,7 @@ class MLP(Layer):
     def get_l1_weight_decay(self, coeffs):
         # raise NotImplementedError
         # check the case where coeffs is a scalar
-         if not hasattr(coeffs, '__iter__'):
+        if not hasattr(coeffs, '__iter__'):
             c = dict()
             for layer in self.layers:
                 c[layer.name] = coeffs
