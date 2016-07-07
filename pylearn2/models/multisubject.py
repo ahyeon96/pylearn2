@@ -71,7 +71,7 @@ class MultiSubjectMLP(Layer):
                  **kwargs):
         super(MultiSubjectMLP, self).__init__(**kwargs)
 
-        self.seed = seed
+
 
         assert isinstance(mlps, list)
         assert all(isinstance(mlp, MLP) for mlp in mlps)
@@ -111,7 +111,7 @@ class MultiSubjectMLP(Layer):
         self.input_space = input_space
         self.set_input_space(input_space)
 
-        for mlp, sp in safe_izip(mlps, input_space):
+        for mlp, sp in safe_izip(mlps, input_space.components):
             assert sp == mlp.get_input_space()
 
         self.freeze_set = set([])
@@ -152,7 +152,7 @@ class MultiSubjectMLP(Layer):
     @wraps(Layer.set_input_space)
     def set_input_space(self, space):
         self.input_space = space
-        for mlp, sp in safe_izip(self.mlps, space):
+        for mlp, sp in safe_izip(self.mlps, space.components):
             mlp.set_input_space(sp)
 
         self._share_parameters()
