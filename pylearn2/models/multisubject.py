@@ -1,18 +1,12 @@
 """
-Multilayer Perceptron
+MultiSubject MLP
 """
-__authors__ = "Ian Goodfellow"
-__copyright__ = "Copyright 2012-2013, Universite de Montreal"
-__credits__ = ["Ian Goodfellow", "David Warde-Farley"]
-__license__ = "3-clause BSD"
-__maintainer__ = "LISA Lab"
+__authors__ = "Jesse Livezey, Ahyeon Hwang"
 
 
 import logging
 import operator
 
-import numpy as np
-from theano.compat import six
 from theano.compat.six.moves import reduce, xrange
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 import theano.tensor as T
@@ -45,19 +39,7 @@ class MultiSubjectMLP(Layer):
         A list of MLP objects. The first MLP is the target subject.
     num_shared_layers : int
         Number of final layers the MLPs should share parameters across.
-    share_biases : bool
-        Whether to share biases across shared layers.
-    batch_size : int, optional
-        If not specified then must be a positive integer. Mostly useful if
-        one of your layers involves a Theano op like convolution that
-        requires a hard-coded batch size.
-    nvis : int, optional
-        Number of "visible units" (input units). Equivalent to specifying
-        `input_space=VectorSpace(dim=nvis)`. Note that certain methods require
-        a different type of input space (e.g. a Conv2Dspace in the case of
-        convnets). Use the input_space parameter in such cases. Should be
-        None if the MLP is part of another MLP.
-    input_space : Space object, optional
+    input_space : Space object
         A Space specifying the kind of input the MLP accepts. If None,
         input space is specified by nvis. Should be None if the MLP is
         part of another MLP.
@@ -71,9 +53,8 @@ class MultiSubjectMLP(Layer):
         MLP accepts. The structure should match that of target_space. The
         default is 'targets'. Note that this argument is ignored when
         the MLP is nested.
-    layer_name : name of the MLP layer. Should be None if the MLP is
-        not part of another MLP.
-    seed : WRITEME
+    share_biases : bool
+        Whether to share biases across shared layers.
     monitor_targets : bool, optional
         Default: True
         If true, includes monitoring channels that are functions of the
@@ -83,11 +64,10 @@ class MultiSubjectMLP(Layer):
         Passed on to the superclass.
     """
 
-    def __init__(self, mlps, num_shared_layers, share_biases=False,
-                 batch_size=None, input_space=None,
-                 input_source='features', target_source='targets',
-                 nvis=None, seed=None, layer_name=None, monitor_targets=True,
-                 other_mlp_weight=1.,
+    def __init__(self, mlps, num_shared_layers,
+                 input_space, input_source=None,
+                 target_source=None, share_biases=False,
+                 other_mlp_weight=1., monitor_targets=True,
                  **kwargs):
         super(MultiSubjectMLP, self).__init__(**kwargs)
 
@@ -97,7 +77,6 @@ class MultiSubjectMLP(Layer):
         assert all(isinstance(mlp, MLP) for mlp in mlps)
         assert len(mlps) >= 1
 
-        self.layer_name = layer_name
         self.num_shared_layers = num_shared_layers
         self.share_biases = share_biases
         self.mlp_names = set()
@@ -109,39 +88,31 @@ class MultiSubjectMLP(Layer):
 
         self.mlps = mlps
 
-        self.batch_size = batch_size
-        self.force_batch_size = batch_size
+        if input_source is None:
+            input_source = len(mlps) * ('features',)
+        if target_source is None:
+            target_source = len(mlps) * ('targets',)
 
         self._input_source = input_source
         self._target_source = target_source
 
         self.monitor_targets = monitor_targets
 
-        if input_space is not None or nvis is not None:
-            self._nested = False
-            self.setup_rng()
+        # Check whether the input_space and input_source structures match
+        try:
+            DataSpecsMapping((input_space, input_source))
+        except ValueError:
+            raise ValueError("The structures of `input_space`, %s, and "
+                             "`input_source`, %s do not match. If you "
+                             "specified a CompositeSpace as an input, "
+                             "be sure to specify the data sources as well."
+                             % (input_space, input_source))
 
-            # check if the layer_name is None (the MLP is the outer MLP)
-            assert layer_name is None
+        self.input_space = input_space
+        self.set_input_space(input_space)
 
-            if nvis is not None:
-                input_space = VectorSpace(nvis)
-
-            # Check whether the input_space and input_source structures match
-            try:
-                DataSpecsMapping((input_space, input_source))
-            except ValueError:
-                raise ValueError("The structures of `input_space`, %s, and "
-                                 "`input_source`, %s do not match. If you "
-                                 "specified a CompositeSpace as an input, "
-                                 "be sure to specify the data sources as well."
-                                 % (input_space, input_source))
-
-            self.input_space = input_space
-            for mlp, sp in safe_izip(mlps, input_space):
-                assert sp == mlp.get_input_space()
-        else:
-            self._nested = True
+        for mlp, sp in safe_izip(mlps, input_space):
+            assert sp == mlp.get_input_space()
 
         self.freeze_set = set([])
 
@@ -180,11 +151,6 @@ class MultiSubjectMLP(Layer):
 
     @wraps(Layer.set_input_space)
     def set_input_space(self, space):
-        if hasattr(self, "mlp"):
-            assert self._nested
-            self.rng = self.mlp.rng
-            self.batch_size = self.mlp.batch_size
-
         self.input_space = space
         for mlp, sp in safe_izip(self.mlps, space):
             mlp.set_input_space(sp)
@@ -246,15 +212,6 @@ class MultiSubjectMLP(Layer):
         total_cost = reduce(operator.add, mlp_costs)
 
         return total_cost
-
-    @wraps(Model.set_batch_size)
-    def set_batch_size(self, batch_size):
-
-        self.batch_size = batch_size
-        self.force_batch_size = batch_size
-
-        for mlp in self.mlps:
-            mlp.set_batch_size(batch_size)
 
     @wraps(Layer._modify_updates)
     def _modify_updates(self, updates):
