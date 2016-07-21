@@ -14,6 +14,7 @@ from pylearn2.utils.iteration import (
     FiniteDatasetIterator,
     resolve_iterator_class
 )
+from pylearn2.utils.multisubject_iteration import MultiSubjectDatasetIterator
 
 from pylearn2.datasets.dataset import Dataset
 from pylearn2.datasets.dense_design_matrix import DenseDesignMatrix
@@ -35,9 +36,9 @@ class MultiSubject(Dataset):
     datasets : list or tuple
         Iterable of dataset objects.
     """
-    _default_seed = (17, 2, 946)
+    _default_seed = (18, 2, 946)
 
-    def __init__(self, datasets):
+    def __init__(self, datasets, rng=_default_seed):
         self.datasets = datasets
         spaces = []
         sources = []
@@ -58,14 +59,26 @@ class MultiSubject(Dataset):
                  return_tuple=False):
 
         iterators = []
+        
         if data_specs is not None:
             spaces = data_specs[0]
             sources = data_specs[1]
-            data_specs = zip(spaces, sources)
+            data_specs = zip(spaces.components, sources)
         else:
             data_specs = len(self.datasets) * [None]
 
-        for dataset, data_spec in safe_izip(self.datasets, data_specs):
+        dataset_data_specs = []
+        for ii, ds in enumerate(self.datasets):
+            ds_i_spaces = []
+            ds_i_sources = []
+            for d_s in data_specs:
+                sp, so = d_s
+                if str(ii) in so:
+                    ds_i_spaces.append(sp)
+                    ds_i_sources.append(so)
+            dataset_data_specs.append((CompositeSpace(tuple(ds_i_spaces)), tuple(ds_i_sources)))
+
+        for dataset, data_spec in safe_izip(self.datasets, dataset_data_specs):
             iterators.append(dataset.iterator(mode,
                                               batch_size=batch_size,
                                               num_batches=num_batches,
@@ -74,3 +87,6 @@ class MultiSubject(Dataset):
                                               return_tuple=return_tuple))
 
         return MultiSubjectDatasetIterator(iterators)
+
+    def get_num_examples(self):
+        return max([ds.get_num_examples() for ds in self.datasets])

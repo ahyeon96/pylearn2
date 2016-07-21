@@ -65,8 +65,8 @@ class MultiSubjectMLP(Layer):
     """
 
     def __init__(self, mlps, num_shared_layers,
-                 input_space, input_source=None,
-                 target_source=None, share_biases=False,
+                 input_space, input_source,
+                 target_source, share_biases=False,
                  other_mlp_weight=1., monitor_targets=True,
                  **kwargs):
         super(MultiSubjectMLP, self).__init__(**kwargs)
@@ -74,7 +74,6 @@ class MultiSubjectMLP(Layer):
 
 
         assert isinstance(mlps, list)
-        assert all(isinstance(mlp, MLP) for mlp in mlps)
         assert len(mlps) >= 1
 
         self.num_shared_layers = num_shared_layers
@@ -87,14 +86,10 @@ class MultiSubjectMLP(Layer):
             self.mlp_names.add(mlp.layer_name)
 
         self.mlps = mlps
+        self.other_mlp_weight = other_mlp_weight
 
-        if input_source is None:
-            input_source = len(mlps) * ('features',)
-        if target_source is None:
-            target_source = len(mlps) * ('targets',)
-
-        self._input_source = input_source
-        self._target_source = target_source
+        self.input_source = input_source
+        self.target_source = target_source
 
         self.monitor_targets = monitor_targets
 
@@ -114,7 +109,7 @@ class MultiSubjectMLP(Layer):
         for mlp, sp in safe_izip(mlps, input_space.components):
             assert sp == mlp.get_input_space()
 
-        self.freeze_set = set([])
+        self.freeze_set = set([]) 
 
     def _share_parameters(self):
         main_mlp = self.mlps[0]
@@ -122,7 +117,7 @@ class MultiSubjectMLP(Layer):
             for layer_n in xrange(-1, -self.num_shared_layers-1, -1):
                 main_layer = main_mlp.layers[layer_n]
                 layer = mlp.layers[layer_n]
-                if isinstance(main_layer, Softmax):
+                if layer_n == -1:
                     layer.W = main_layer.W
                 else:
                     params = main_layer.transformer.get_params()
@@ -160,18 +155,51 @@ class MultiSubjectMLP(Layer):
     @wraps(Layer.get_monitoring_channels)
     def get_monitoring_channels(self, data):
         rvals = OrderedDict()
-        for mlp, ds in safe_izip(self.mlps, data):
-            if self.monitor_targets:
-                X, Y = data
-            else:
-                X = data
-                Y = None
-            rval = mlp.get_monitoring_channels(state_below=X,
-                                                      targets=Y)
+        if self.monitor_targets:
+            X_data, Y_data = data
+        else:
+            X_data = data
+            Y_data = len(X_data) * [None]
+        for mlp, X, Y in safe_izip(self.mlps, X_data, Y_data):
+            rval = mlp.get_monitoring_channels(data=(X, Y))
             for key in rval.keys():
                 rvals[key] = rval[key]
 
         return rvals
+
+    def get_monitoring_data_specs(self):
+        """
+        Returns data specs requiring both inputs and targets.
+
+        Returns
+        -------
+        data_specs: TODO
+            The data specifications for both inputs and targets.
+        """
+        input_spaces = []
+        target_spaces = []
+        input_sources = []
+        target_sources = []
+        for mlp in self.mlps:
+            space, source = mlp.get_monitoring_data_specs()
+            if mlp.monitor_targets:
+                inputs, targets = space.components
+                input_spaces.append(inputs)
+                target_spaces.append(targets)
+                input_sources.append(source[0])
+                target_sources.append(source[1])
+            else:
+                input_spaces.append(space)
+                input_sources.append(source)
+        input_space = CompositeSpace(input_spaces)
+        if len(target_spaces) > 0:
+            target_space = CompositeSpace(target_spaces)
+            space = CompositeSpace((input_space, target_space))
+            source = (tuple(input_sources), tuple(target_sources))
+        else:
+            space = input_space
+            source = tuple(input_sources)
+        return space, source
 
     @wraps(Layer.get_params)
     def get_params(self):
@@ -343,9 +371,9 @@ class MultiSubjectMLP(Layer):
         """
 
         cost = None
-        for mlp, ds in safe_izip(model.mlps, data): 
-            self.cost_from_X_data_specs()[0].validate(data)
-            X, Y = data
+        self.cost_from_X_data_specs()[0].validate(data)
+        X_data, Y_data = data
+        for mlp, X, Y in safe_izip(self.mlps, X_data, Y_data):
             Y_hat = mlp.fprop(X)
 
             c = mlp.cost(Y, Y_hat)
@@ -361,13 +389,17 @@ class MultiSubjectMLP(Layer):
 
         This is useful if cost_from_X is used in a MethodCost.
         """
-        spaces = []
-        sources = []
-        for mlp in self.mlps: 
-            spaces.append(CompositeSpace((self.get_input_space(),
-                                          self.get_target_space())))
-            sources.append((self.get_input_source(), self.get_target_source()))
-        return (CompositeSpace(tuple(spaces)), tuple(sources))
+        input_spaces = []
+        input_sources = []
+        target_spaces = []
+        target_sources = []
+        for mlp in self.mlps:
+            input_spaces.append(mlp.get_input_space())
+            target_spaces.append(mlp.get_target_space())
+        input_space = CompositeSpace(tuple(input_spaces))
+        target_space = CompositeSpace(tuple(target_spaces))
+        return (CompositeSpace((input_space, target_space)),
+                (self.input_source, self.target_source))
 
     def __str__(self):
         """

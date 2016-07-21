@@ -305,6 +305,8 @@ class SGD(TrainingAlgorithm):
                                           batch_size=self.batch_size)
             theano_args.append(arg)
         theano_args = tuple(theano_args)
+        for arg in theano_args:
+            print arg
 
         # Methods of `self.cost` need args to be passed in a format compatible
         # with data_specs
@@ -449,9 +451,15 @@ class SGD(TrainingAlgorithm):
                                     num_batches=self.batches_per_iter)
 
         on_load_batch = self.on_load_batch
+        print on_load_batch
         for batch in iterator:
             for callback in on_load_batch:
                 callback(*batch)
+            print ''
+            for b in batch:
+                print 'in'
+                for bb in b:
+                    print bb.shape
             self.sgd_update(*batch)
             # iterator might return a smaller batch if dataset size
             # isn't divisible by batch_size

@@ -467,7 +467,7 @@ class MLP(Layer):
             self.setup_rng()
 
             # check if the layer_name is None (the MLP is the outer MLP)
-            assert layer_name is None
+            #assert layer_name is None
 
             if nvis is not None:
                 input_space = VectorSpace(nvis)

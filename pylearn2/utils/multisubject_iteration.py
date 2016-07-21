@@ -48,10 +48,11 @@ class MultiSubjectDatasetIterator(object):
         in `data_specs`, that will be called on the individual
         source batches prior to any further processing.
     """
+    stochastic = False
 
     def __init__(self, iterators):
         self._iterators = iterators
-        assert all([isinstance(it, FiniteDatasetIterator), for it in iterators)
+        assert all([isinstance(it, FiniteDatasetIterator) for it in iterators])
 
     def __iter__(self):
         return self
@@ -75,7 +76,13 @@ class MultiSubjectDatasetIterator(object):
         StopIteration
             When there are no more batches to return.
         """
-        return tuple(it.next() for it in self.iterators)
+        features = []
+        targets = []
+        for it in self._iterators:
+            X, Y = it.next()
+            features.append(X)
+            targets.append(Y)
+        return tuple(features + targets)
 
     def __next__(self):
         return self.next()
