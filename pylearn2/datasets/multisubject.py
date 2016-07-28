@@ -58,6 +58,9 @@ class MultiSubject(Dataset):
                  rng=None, data_specs=None,
                  return_tuple=False):
 
+        if mode is None:
+            mode = self._iter_mode
+
         iterators = []
         
         if data_specs is not None:

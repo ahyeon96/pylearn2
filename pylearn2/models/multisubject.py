@@ -161,9 +161,9 @@ class MultiSubjectMLP(Layer):
             X_data = data
             Y_data = len(X_data) * [None]
         for mlp, X, Y in safe_izip(self.mlps, X_data, Y_data):
-            rval = mlp.get_monitoring_channels(data=(X, Y))
-            for key in rval.keys():
-                rvals[key] = rval[key]
+            mlp_rval = mlp.get_monitoring_channels(data=(X, Y))
+            for key in mlp_rval.keys():
+                rvals[mlp.layer_name + '_' + key] = mlp_rval[key]
 
         return rvals
 

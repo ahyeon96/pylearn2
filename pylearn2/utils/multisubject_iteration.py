@@ -86,3 +86,10 @@ class MultiSubjectDatasetIterator(object):
 
     def __next__(self):
         return self.next()
+
+    @property
+    @wraps(SubsetIterator.num_examples, assigned=(), updated=())
+    def num_examples(self):
+        num_ex = [it.num_examples for it in self._iterators]
+        assert len(set(num_ex)) == 1
+        return num_ex[0]
