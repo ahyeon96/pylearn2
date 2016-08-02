@@ -48,7 +48,7 @@ class MultiSubjectDatasetIterator(object):
         in `data_specs`, that will be called on the individual
         source batches prior to any further processing.
     """
-    stochastic = False
+    stochastic = True
 
     def __init__(self, iterators):
         self._iterators = iterators
